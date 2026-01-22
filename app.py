@@ -11,7 +11,7 @@ import google.generativeai as genai
 # ===============================
 st.set_page_config(page_title="BRD Analyzer (Gemini)", layout="wide")
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+genai.configure(api_key=os.getenv("gemini_api_key"))
 model = genai.GenerativeModel("gemini-1.5-flash")
 
 # ===============================
