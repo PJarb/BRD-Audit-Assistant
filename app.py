@@ -7,7 +7,7 @@ import os
 app = Flask(__name__)
 
 # ===== CONFIG =====
-genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+genai.configure(api_key=os.environ["gemini_api_key"])
 model = genai.GenerativeModel("models/gemini-2.5-flash")
 
 # ===== TEXT EXTRACTION =====
