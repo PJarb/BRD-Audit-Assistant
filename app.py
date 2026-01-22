@@ -1,157 +1,145 @@
 import streamlit as st
 import pandas as pd
-import time
-import os
-import fitz  # PyMuPDF
+
+from pypdf import PdfReader
 from docx import Document
+
 import google.generativeai as genai
 
-# ===============================
-# Config
-# ===============================
-st.set_page_config(page_title="BRD Analyzer (Gemini)", layout="wide")
 
-genai.configure(api_key=os.getenv("gemini_api_key"))
-model = genai.GenerativeModel("gemini-2.5-flash")
+# =========================
+# 🔐 CONFIG
+# =========================
+st.set_page_config(
+    page_title="BRD Audit Assistant",
+    layout="wide"
+)
 
-# ===============================
-# Session State
-# ===============================
-if "step" not in st.session_state:
-    st.session_state.step = "empty"
+st.title("📄 BRD Audit Assistant")
+st.caption("Deterministic Requirement Structuring (No Interpretation)")
 
-if "results" not in st.session_state:
-    st.session_state.results = []
 
-if "file_name" not in st.session_state:
-    st.session_state.file_name = None
+# =========================
+# 🔑 API KEY
+# =========================
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", None)
 
-# ===============================
-# Utils
-# ===============================
-def extract_text_from_pdf(file):
-    doc = fitz.open(stream=file.read(), filetype="pdf")
+if not GEMINI_API_KEY:
+    st.error("❌ GEMINI_API_KEY not found in Streamlit secrets")
+    st.stop()
+
+genai.configure(api_key=GEMINI_API_KEY)
+
+model = genai.GenerativeModel(
+    model_name="models/gemini-2.5-flash"
+)
+
+
+# =========================
+# 📄 TEXT EXTRACTION (NO AI)
+# =========================
+def extract_pdf_to_text(file):
+    reader = PdfReader(file)
     text = ""
-    for page in doc:
-        text += page.get_text()
+    for page in reader.pages:
+        page_text = page.extract_text()
+        if page_text:
+            text += page_text + "\n"
     return text
 
-def extract_text_from_docx(file):
+
+def extract_docx_to_text(file):
     doc = Document(file)
-    return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+    return "\n".join(
+        [p.text for p in doc.paragraphs if p.text.strip()]
+    )
 
-def split_requirements(text):
-    lines = [l.strip() for l in text.split("\n") if len(l.strip()) > 20]
-    return lines[:10]  # จำกัดไว้ demo
 
-def analyze_with_gemini(requirements):
-    prompt = f"""
-You are a senior Business Analyst and QA.
+# =========================
+# 🔒 PROMPTS (DETERMINISTIC)
+# =========================
+SYSTEM_PROMPT = """
+You are a deterministic text-structuring assistant.
 
-For each requirement below:
-1. Classify as Clear or Unclear
-2. If Unclear, explain the issue
-3. Suggest a clearer rewrite
-4. If Clear, generate a Gherkin test case
+You are NOT a business analyst.
+You are NOT allowed to interpret, infer, summarize, or add meaning.
 
-Return JSON array only.
+STRICT RULES:
+1. Do NOT add new words that do not appear in the source text.
+2. Do NOT infer user intent or system behavior.
+3. Do NOT generalize meanings.
+4. Do NOT resolve ambiguity.
+5. Every output must be traceable to the source text.
 
-Requirements:
-{requirements}
+Allowed operations only:
+- grouping
+- reordering
+- concatenation of dependent fragments
 """
-    response = model.generate_content(prompt)
-    return response.text
 
-# ===============================
-# Sidebar
-# ===============================
-with st.sidebar:
-    st.title("🤖 BRD Analyzer")
-    st.caption("PDF / DOCX + Gemini LLM")
+TASK_PROMPT_TEMPLATE = """
+Task:
+From the provided BRD text, consolidate dependent fragments
+into self-contained, auditable requirements.
 
-    uploaded_file = st.file_uploader(
-        "Upload BRD (PDF or DOCX)",
-        type=["pdf", "docx"]
+Definition of dependency (STRICT):
+1. Sequential steps within the same flow
+2. Condition or outcome of another fragment
+3. Same data object reference (e.g., OTP, Category, Receipt)
+
+Rules:
+- A requirement must be understandable without referencing other requirements.
+- Do NOT merge fragments from different user roles.
+- Do NOT merge fragments from different sessions.
+- Use ONLY words that appear in the source text.
+- Output JSON only.
+
+Output format:
+[
+  {
+    "requirement_id": "REQ-XXX",
+    "session": "Registration | Upload Receipt | Redeem Reward | Profile | Other",
+    "source_texts": [
+      "exact copied fragment text"
+    ],
+    "requirement_text": "consolidated requirement using only source words"
+  }
+]
+
+BRD TEXT:
+----------------
+{brd_text}
+----------------
+"""
+
+
+# =========================
+# 📂 UI: FILE UPLOAD
+# =========================
+uploaded_file = st.file_uploader(
+    "Upload BRD file (PDF or DOCX)",
+    type=["pdf", "docx"]
+)
+
+raw_text = None
+
+if uploaded_file:
+    if uploaded_file.name.lower().endswith(".pdf"):
+        raw_text = extract_pdf_to_text(uploaded_file)
+    elif uploaded_file.name.lower().endswith(".docx"):
+        raw_text = extract_docx_to_text(uploaded_file)
+
+    st.subheader("🔎 Extracted Raw Text (Preview)")
+    st.text_area(
+        "Raw text extracted from document (no AI)",
+        raw_text[:3000],
+        height=300
     )
 
-    if uploaded_file:
-        st.session_state.file_name = uploaded_file.name
-        st.session_state.step = "processing"
 
-# ===============================
-# Empty View
-# ===============================
-if st.session_state.step == "empty":
-    st.title("Welcome to BRD Analyzer")
-    st.write(
-        "Upload a BRD document to analyze requirement clarity using Gemini AI."
-    )
-
-# ===============================
-# Processing View
-# ===============================
-elif st.session_state.step == "processing":
-    st.title(f"Analyzing {st.session_state.file_name}")
-
-    with st.spinner("Extracting text and analyzing with Gemini..."):
-        # ---- Extract ----
-        if uploaded_file.name.endswith(".pdf"):
-            text = extract_text_from_pdf(uploaded_file)
-        else:
-            text = extract_text_from_docx(uploaded_file)
-
-        requirements = split_requirements(text)
-
-        # ---- Gemini ----
-        raw_output = analyze_with_gemini(requirements)
-
-        # ---- Parse JSON (simple demo) ----
-        try:
-            results = eval(raw_output)  # demo only (present ได้)
-        except:
-            st.error("Gemini output parsing failed")
-            st.stop()
-
-        st.session_state.results = results
-        st.session_state.step = "results"
-
-# ===============================
-# Results View
-# ===============================
-elif st.session_state.step == "results":
-
-    st.header(st.session_state.file_name)
-
-    df = pd.DataFrame(st.session_state.results)
-
-    # ---- Metrics ----
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total", len(df))
-    col2.metric("Clear", len(df[df["status"] == "Clear"]))
-    col3.metric("Unclear", len(df[df["status"] == "Unclear"]))
-
-    st.divider()
-
-    # ---- Detail ----
-    for i, r in df.iterrows():
-        with st.expander(f"Requirement {i+1} | {r['status']}"):
-            st.write(r["text"])
-
-            if r["status"] == "Unclear":
-                st.warning(r["issue"])
-                st.text_area(
-                    "AI Suggestion",
-                    r["suggestion"],
-                    key=f"sug_{i}"
-                )
-
-            if r.get("testCase"):
-                st.subheader("Test Case")
-                st.code(r["testCase"], language="gherkin")
-
-    # ---- Export ----
-    st.download_button(
-        "⬇ Export CSV",
-        df.to_csv(index=False),
-        file_name="brd_analysis_gemini.csv"
-    )
+# =========================
+# 🤖 LLM STRUCTURING
+# =========================
+if raw_text and st.button("🚀 Structure Requirements (Deterministic)"):
+    with st.spinner("Structuring requirements with strict rules..."):
+        task_prompt = TASK_PROMPT_TE_
