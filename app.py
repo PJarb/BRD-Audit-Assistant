@@ -22,10 +22,10 @@ st.caption("Deterministic Requirement Structuring (No Interpretation)")
 # =========================
 # 🔑 API KEY
 # =========================
-GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", None)
+gemini_api_key = st.secrets.get("gemini_api_key", None)
 
 if not GEMINI_API_KEY:
-    st.error("❌ GEMINI_API_KEY not found in Streamlit secrets")
+    st.error("❌ gemini_api_key not found in Streamlit secrets")
     st.stop()
 
 genai.configure(api_key=GEMINI_API_KEY)
