@@ -3,12 +3,15 @@ from pypdf import PdfReader
 from docx import Document
 import google.generativeai as genai
 import os
+import google.generativeai as genai
 
-app = Flask(__name__)
+api_key = os.environ.get("GEMINI_API_KEY")
 
-# ===== CONFIG =====
-genai.configure(api_key=os.environ["gemini_api_key"])
-model = genai.GenerativeModel("models/gemini-2.5-flash")
+if not api_key:
+    raise RuntimeError("GEMINI_API_KEY is not set")
+
+genai.configure(api_key=api_key)
+
 
 # ===== TEXT EXTRACTION =====
 def extract_pdf_to_text(file):
